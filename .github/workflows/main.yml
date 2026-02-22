@@ -34,7 +34,80 @@ jobs:
           $output = "C:\tailscale-setup.exe"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           (New-Object System.Net.WebClient).DownloadFile($url, $output)
-          Write-Output "[2] Download selesai"
+          Write-Output "[2] Installing..."
+          Start-Process -FilePath $output -ArgumentList "/install /quiet" -Wait -NoNewWindow
+          Start-Sleep -Seconds 15
+          if (Test-Path "C:\Program Files\Tailscale\tailscale.exe") {
+            Write-Output "[OK] Tailscale terinstall"
+          } else {
+            Write-Output "[ERROR] Tailscale gagal install!"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Connect Tailscale
+        run: |
+          $authkey = "${{ secrets.TAILSCALE_AUTHKEY }}"
+          if ([string]::IsNullOrEmpty($authkey)) {
+            Write-Output "[ERROR] TAILSCALE_AUTHKEY kosong!"
+            exit 1
+          }
+          Write-Output "[1] Connecting..."
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$authkey --hostname=github-rdp
+          Start-Sleep -Seconds 10
+          $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          Write-Output ""
+          Write-Output "========================================="
+          Write-Output "  RDP SIAP!"
+          Write-Output "========================================="
+          Write-Output "  IP Tailscale : $ip"
+          Write-Output "  Username     : ${{ env.RDP_USERNAME }}"
+          Write-Output "  Password     : ${{ env.RDP_PASSWORD }}"
+          Write-Output "========================================="
+        shell: powershell
+
+      - name: Keep Alive 6 Jam
+        run: |
+          Write-Output "[ALIVE] RDP aktif - Anti idle ON"
+          Write-Output "[ALIVE] JANGAN CANCEL workflow ini!"
+          Write-Output ""
+
+          $timeout = 350
+          $elapsed = 0
+
+          while ($elapsed -lt $timeout) {
+            # Anti idle - buat aktivitas setiap menit
+            $time = Get-Date -Format "HH:mm:ss"
+            $remaining = $timeout - $elapsed
+
+            # Ping tailscale supaya tidak mati
+            & "C:\Program Files\Tailscale\tailscale.exe" status | Out-Null
+
+            # Cek RDP masih aktif
+            $rdp = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
+            if ($rdp.Status -ne "Running") {
+              Start-Service -Name "TermService"
+              Write-Output "[$time] RDP service restarted"
+            }
+
+            # Cek Tailscale masih aktif
+            $ts = Get-Service -Name "Tailscale" -ErrorAction SilentlyContinue
+            if ($ts.Status -ne "Running") {
+              Start-Service -Name "Tailscale"
+              Write-Output "[$time] Tailscale service restarted"
+            }
+
+            # Tulis log supaya GitHub tidak kill
+            if ($remaining % 10 -eq 0) {
+              $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+              Write-Output "[$time] Sisa: $remaining menit | IP: $ip | RDP: $($rdp.Status) | Tailscale: $($ts.Status)"
+            }
+
+            Start-Sleep -Seconds 60
+            $elapsed++
+          }
+          Write-Output "[DONE] Waktu habis!"
+        shell: powershell          Write-Output "[2] Download selesai"
 
           Write-Output "[3] Installing Tailscale..."
           Start-Process -FilePath $output -ArgumentList "/install /quiet" -Wait -NoNewWindow
